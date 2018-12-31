@@ -56,7 +56,7 @@
 19 E $'\031'    33 - 3          4D - M          67 - g
  */
 
- /***************************************************************************************************************************************************************************//**
+/***************************************************************************************************************************************************************************//**
  *
  */
 static const char *XLAT[] = { //@f:0
@@ -87,9 +87,8 @@ typedef struct __argset__ {
     int        argc;
     const char **argv;
     // the filtered arguments
-    size_t     size;
-    size_t     count;
-    const char **args;
+    size_t     fargc;
+    const char **fargv;
     // the Objective-C runtime version parameter prefix
     const char *rtParamPfx;
     size_t     rtParamPfxLen;
@@ -104,8 +103,8 @@ typedef struct __argset__ {
  * @return
  */
 int isArgumentNew(ArgSet *argset, const char *arg) {
-    for(int i = 0; i < argset->count; ++i) {
-        if(strcmp(arg, argset->args[i]) == 0) return 0;
+    for(int i = 0; i < argset->fargc; ++i) {
+        if(strcmp(arg, argset->fargv[i]) == 0) return 0;
     }
     return 1;
 }
@@ -118,7 +117,7 @@ int isArgumentNew(ArgSet *argset, const char *arg) {
  * @return
  */
 int isHigherRuntimeFlag(const ArgSet *argset, const char *a, int idx) {
-    return (strcmp(argset->args[idx], a) < 0);
+    return (strcmp(argset->fargv[idx], a) < 0);
 }
 
 /***************************************************************************************************************************************************************************//**
@@ -133,25 +132,19 @@ int isNotRuntimeFlag(const ArgSet *argset, const char *a) {
 
 /***************************************************************************************************************************************************************************//**
  *
- * @param argset
- * @param c
- */
-void putChar(ArgSet *argset, int c) {
-    putc(c, argset->fout);
-}
-
-/***************************************************************************************************************************************************************************//**
- *
- * @param argset
  * @param str
+ * @param fout
  */
-void putStr(ArgSet *argset, const char *str) {
+void putStr(const char *str, FILE *fout) {
     int j  = 0;
     int ch = (int)str[j++];
 
     while(ch) {
         const char *xlt = XLAT[ch + 128];
-        if(xlt) fputs(xlt, argset->fout); else putChar(argset, ch);
+        if(xlt) fputs(xlt, fout);
+        else {
+            putc(ch, fout);
+        }
         ch = (int)str[j++];
     }
 }
@@ -163,8 +156,8 @@ void putStr(ArgSet *argset, const char *str) {
  * @return
  */
 int insertArgument(ArgSet *argset, const char *a) {
-    argset->args[argset->count] = a;
-    return (int)(argset->count++);
+    argset->fargv[argset->fargc] = a;
+    return (int)(argset->fargc++);
 }
 
 /***************************************************************************************************************************************************************************//**
@@ -175,7 +168,7 @@ int insertArgument(ArgSet *argset, const char *a) {
  * @return
  */
 int replaceArgument(ArgSet *argset, const char *a, int idx) {
-    argset->args[idx] = a;
+    argset->fargv[idx] = a;
     return idx;
 }
 
@@ -185,8 +178,8 @@ int replaceArgument(ArgSet *argset, const char *a, int idx) {
  * @return
  */
 int findRTFlag(ArgSet *argset) {
-    for(int i = 0; i < argset->count; ++i) {
-        if(!isNotRuntimeFlag(argset, argset->args[i])) return i;
+    for(int i = 0; i < argset->fargc; ++i) {
+        if(!isNotRuntimeFlag(argset, argset->fargv[i])) return i;
     }
     return -1;
 }
@@ -227,8 +220,8 @@ void filterArguments(ArgSet *argset) {
  * @param i
  */
 void printArgument(ArgSet *argset, int i) {
-    putChar(argset, ' ');
-    putStr(argset, argset->args[i]);
+    putc(' ', argset->fout);
+    putStr(argset->fargv[i], argset->fout);
 }
 
 /***************************************************************************************************************************************************************************//**
@@ -236,13 +229,14 @@ void printArgument(ArgSet *argset, int i) {
  * @param argset
  */
 void printFilteredArguments(ArgSet *argset) {
-    if(argset->count) {
-        int j = 0;
-        putStr(argset, argset->args[j++]);
-        while(j < argset->count) printArgument(argset, j++);
+    if(argset->fargc) {
+        int        j    = 0;
+        const char *str = argset->fargv[j++];
+        putStr(str, argset->fout);
+        while(j < argset->fargc) printArgument(argset, j++);
     }
 
-    putChar(argset, '\n');
+    putc('\n', argset->fout);
 }
 
 /***************************************************************************************************************************************************************************//**
@@ -251,15 +245,14 @@ void printFilteredArguments(ArgSet *argset) {
  * @return
  */
 int processArguments(ArgSet *argset) {
-    argset->args = malloc(argset->size);
-
-    if(argset->args) {
+    if(argset->fargv) {
         filterArguments(argset);
         printFilteredArguments(argset);
-        free(argset->args);
+        free(argset->fargv);
         return 0;
     }
 
+    puts("Not enough memory.");
     return 1;
 }
 
@@ -269,8 +262,10 @@ int processArguments(ArgSet *argset) {
  * @return
  */
 int processArgument(ArgSet *argset) {
-    if(argset->argc == 2) putStr(argset, argset->argv[1]);
-    putChar(argset, '\n');
+    if(argset->argc == 2) {
+        putStr(argset->argv[1], argset->fout);
+    }
+    putc('\n', argset->fout);
     return 0;
 }
 
@@ -282,9 +277,15 @@ int processArgument(ArgSet *argset) {
  * @return
  */
 int cleanGNUstepConfigCommandLine(FILE *fout, int argc, const char *argv[]) {
-    ArgSet argset = {
-            .argc = argc, .argv = argv, .size = (argc * sizeof(char *)), .args = NULL, .count = 0, .fout = fout, .rtParamPfx = RTPARAMPREFIX, .rtParamPfxLen = strlen(RTPARAMPREFIX)
-    };
+    ArgSet argset = { /*@f:0*/
+        .argc = argc,
+        .argv = argv,
+        .fargc = 0,
+        .fargv = malloc(argc * sizeof(char *)),
+        .rtParamPfx = RTPARAMPREFIX,
+        .rtParamPfxLen = strlen(RTPARAMPREFIX),
+        .fout = fout
+    /*@f:1*/};
 
     return ((argset.argc <= 2) ? processArgument : processArguments)(&argset);
 }
