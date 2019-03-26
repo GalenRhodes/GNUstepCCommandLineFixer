@@ -29,7 +29,7 @@
 #include <regex.h>
 
 #ifndef _DOTEST_
-    #define _DOTEST_ 1
+    #define _DOTEST_ 0
 #endif
 
 typedef long long lngint;
